@@ -66,15 +66,28 @@ typedef enum {
 
 typedef struct _Expr {
   ExprKind kind;
-  struct _Expr* l;
-  struct _Expr* r;
-  int64_t intval;
-  char* fnname;
-  struct _Expr* fnbody;
-  struct _Expr* callarg;
-  struct _Expr* cond;
-  struct _Expr* tbranch;
-  struct _Expr* fbranch;
+  union {
+    struct {
+      struct _Expr* l;
+      struct _Expr* r;
+    } binop;
+    struct {
+      int64_t intval;
+    } i;
+    struct {
+      char* fnname;
+      struct _Expr* fnbody;
+    } funcdef;
+    struct {
+      char* fnname;
+      struct _Expr* callarg;
+    } funcall;
+    struct {
+      struct _Expr* cond;
+      struct _Expr* tbranch;
+      struct _Expr* fbranch;
+    } ifnode;
+  };
 } Expr;
 
 typedef struct {
@@ -156,7 +169,7 @@ Expr* parse_intlit(void) {
   case TOKEN_INTLIT: {
     Expr* e = malloc(sizeof(Expr));
     e->kind = EXPR_INT;
-    e->intval = t.intval;
+    e->i.intval = t.intval;
     return e;
   }
   case TOKEN_LPAREN: {
@@ -171,9 +184,9 @@ Expr* parse_intlit(void) {
     if (strcmp(t.ident, "if") == 0) { // if syntax
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_IF;
-      e->cond = parse();
-      e->tbranch = parse();
-      e->fbranch = parse();
+      e->ifnode.cond = parse();
+      e->ifnode.tbranch = parse();
+      e->ifnode.fbranch = parse();
       return e;
     }
 
@@ -181,14 +194,14 @@ Expr* parse_intlit(void) {
     if (eq.kind == TOKEN_EQ) { // function-def syntax
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_FUNCDEF;
-      e->fnname = t.ident;
-      e->fnbody = parse();
+      e->funcdef.fnname = t.ident;
+      e->funcdef.fnbody = parse();
       return e;
     } else if (eq.kind == TOKEN_DOT) { // function-call syntax
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_FUNCCALL;
-      e->fnname = t.ident;
-      e->callarg = parse();
+      e->funcall.fnname = t.ident;
+      e->funcall.callarg = parse();
       return e;
     } else {
       assert(false);
@@ -218,8 +231,8 @@ Expr* parse(void) {
       Expr* r = parse_intlit();
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_ADD;
-      e->l = l;
-      e->r = r;
+      e->binop.l = l;
+      e->binop.r = r;
       l = e;
       break;
     }
@@ -227,8 +240,8 @@ Expr* parse(void) {
       Expr* r = parse_intlit();
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_SUB;
-      e->l = l;
-      e->r = r;
+      e->binop.l = l;
+      e->binop.r = r;
       l = e;
       break;
     }
@@ -236,8 +249,8 @@ Expr* parse(void) {
       Expr* r = parse_intlit();
       Expr* e = malloc(sizeof(Expr));
       e->kind = EXPR_LESSER;
-      e->l = l;
-      e->r = r;
+      e->binop.l = l;
+      e->binop.r = r;
       l = e;
       break;
     }
@@ -252,38 +265,38 @@ Expr* parse(void) {
 int64_t normal_eval(Expr* e) {
   switch (e->kind) {
   case EXPR_ADD:
-    return eval(e->l) + eval(e->r);
+    return eval(e->binop.l) + eval(e->binop.r);
   case EXPR_SUB:
-    return eval(e->l) - eval(e->r);
+    return eval(e->binop.l) - eval(e->binop.r);
   case EXPR_LESSER:
-    return eval(e->l) < eval(e->r);
+    return eval(e->binop.l) < eval(e->binop.r);
   case EXPR_INT:
-    return e->intval;
+    return e->i.intval;
   case EXPR_ARG:
     return funcarg;
   case EXPR_FUNCDEF:
-    funcs[funcnum] = (Function){e->fnname, e->fnbody};
+    funcs[funcnum] = (Function){e->funcdef.fnname, e->funcdef.fnbody};
     funcnum++;
     return 0;
   case EXPR_FUNCCALL:
     for (int i=0; i<funcnum; i++) {
       Function f = funcs[i];
-      if (strcmp(f.name, e->fnname) == 0) {
+      if (strcmp(f.name, e->funcall.fnname) == 0) {
         int64_t tmparg = funcarg;
-        funcarg = eval(e->callarg);
+        funcarg = eval(e->funcall.callarg);
         int64_t result = eval(f.fnexpr);
         funcarg = tmparg;
         return result;
       }
     }
-    error("undeclared %s function.", e->fnname);
+    error("undeclared %s function.", e->funcall.fnname);
     break;
   case EXPR_IF: {
-    int64_t c = eval(e->cond);
+    int64_t c = eval(e->ifnode.cond);
     if (c) {
-      return eval(e->tbranch);
+      return eval(e->ifnode.tbranch);
     } else {
-      return eval(e->fbranch);
+      return eval(e->ifnode.fbranch);
     }
   }
   default:
@@ -340,8 +353,8 @@ int64_t jit_call(void* funcp, int64_t arg) {
 void jit_codegen(Expr* e) {
   switch (e->kind) {
   case EXPR_ADD:
-    jit_codegen(e->l);
-    jit_codegen(e->r);
+    jit_codegen(e->binop.l);
+    jit_codegen(e->binop.r);
     write_hex(
               0x59, // pop rcx
               0x58, // pop rax
@@ -350,8 +363,8 @@ void jit_codegen(Expr* e) {
               );
     break;
   case EXPR_SUB:
-    jit_codegen(e->l);
-    jit_codegen(e->r);
+    jit_codegen(e->binop.l);
+    jit_codegen(e->binop.r);
     write_hex(
               0x59, // pop rcx
               0x58, // pop rax
@@ -360,8 +373,8 @@ void jit_codegen(Expr* e) {
               );
     break;
   case EXPR_LESSER:
-    jit_codegen(e->l);
-    jit_codegen(e->r);
+    jit_codegen(e->binop.l);
+    jit_codegen(e->binop.r);
     write_hex(
               0x59, // pop rcx
               0x58, // pop rax
@@ -373,24 +386,24 @@ void jit_codegen(Expr* e) {
     break;
   case EXPR_INT:
     write_hex(0x68); // push $intlit
-    write_lendian(e->intval);
+    write_lendian(e->i.intval);
     break;
   case EXPR_ARG:
     write_hex(0x41, 0x50); // push r8
     break;
   case EXPR_FUNCDEF:
-    funcs[funcnum] = (Function){e->fnname, e->fnbody, jit_pos};
+    funcs[funcnum] = (Function){e->funcdef.fnname, e->funcdef.fnbody, jit_pos};
     funcnum++;
-    jit_codegen(e->fnbody);
+    jit_codegen(e->funcdef.fnbody);
     write_hex(0x58); // pop rax # for return value.
     write_hex(0xc3); // ret
     break;
   case EXPR_FUNCCALL:
     for (int i=0; i<funcnum; i++) {
       Function f = funcs[i];
-      if (strcmp(f.name, e->fnname) == 0) {
+      if (strcmp(f.name, e->funcall.fnname) == 0) {
         write_hex(0x41, 0x50); // push r8 # for register escape
-        jit_codegen(e->callarg);
+        jit_codegen(e->funcall.callarg);
         write_hex(0x41, 0x58); // pop r8 # for dot(.) argument.
         write_hex(0xe8); // call $rel
         write_lendian(f.jitidx - jit_pos - 4);
@@ -401,17 +414,17 @@ void jit_codegen(Expr* e) {
         return;
       }
     }
-    error("undeclared %s function.", e->fnname);
+    error("undeclared %s function.", e->funcall.fnname);
     break;
   case EXPR_IF:
-    jit_codegen(e->cond);
+    jit_codegen(e->ifnode.cond);
     write_hex(0x58); // pop rax
     write_hex(0x48, 0x83, 0xf8, 0x00); // cmp rax, 0
     write_hex(0x0f, 0x84); write_lendian(0); size_t fixupF = jit_pos; // je F (fixup)
-    jit_codegen(e->tbranch); // - true branch
+    jit_codegen(e->ifnode.tbranch); // - true branch
     write_hex(0xe9); write_lendian(0); size_t fixupE = jit_pos; // jmp E (fixup)
     size_t faddr = jit_pos; // F:
-    jit_codegen(e->fbranch); // - false branch
+    jit_codegen(e->ifnode.fbranch); // - false branch
     size_t eaddr = jit_pos; // E:
     fixup_lendian(fixupF-4, faddr - fixupF);
     fixup_lendian(fixupE-4, eaddr - fixupE);
@@ -429,11 +442,11 @@ int64_t jit_eval(Expr* e) {
   } else if (e->kind == EXPR_FUNCCALL) {
     for (int i=0; i<funcnum; i++) {
       Function f = funcs[i];
-      if (strcmp(f.name, e->fnname) == 0) {
-        return jit_call(jit_mem + f.jitidx, jit_eval(e->callarg));
+      if (strcmp(f.name, e->funcall.fnname) == 0) {
+        return jit_call(jit_mem + f.jitidx, jit_eval(e->funcall.callarg));
       }
     }
-    error("undeclared %s function.", e->fnname);
+    error("undeclared %s function.", e->funcall.fnname);
   } else {
     return normal_eval(e);
   }
