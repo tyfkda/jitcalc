@@ -1,7 +1,9 @@
+CFLAGS=-O2 -std=gnu11 -Wall -Werror
+
 calc: main.c
-	gcc -std=gnu11 -o jitcalc main.c
+	gcc $(CFLAGS) -o jitcalc main.c
 jitcalc: main.c
-	gcc -std=gnu11 -o jitcalc -D JIT main.c
+	gcc $(CFLAGS) -o jitcalc -D JIT main.c
 
 normal-test: calc
 	sh test.sh
